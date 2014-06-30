@@ -82,13 +82,13 @@ RssDownloadRulePtr RssDownloadRule::fromVariantHash(const QVariantHash &rule_has
 {
   RssDownloadRulePtr rule(new RssDownloadRule);
   rule->setName(rule_hash.value("name").toString());
+  rule->setUseRegex(rule_hash.value("use_regex", false).toBool());
   rule->setMustContain(rule_hash.value("must_contain").toString());
   rule->setMustNotContain(rule_hash.value("must_not_contain").toString());
   rule->setRssFeeds(rule_hash.value("affected_feeds").toStringList());
   rule->setEnabled(rule_hash.value("enabled", false).toBool());
   rule->setSavePath(rule_hash.value("save_path").toString());
   rule->setLabel(rule_hash.value("label_assigned").toString());
-  rule->setUseRegex(rule_hash.value("use_regex", false).toBool());
   return rule;
 }
 
@@ -106,14 +106,14 @@ QVariantHash RssDownloadRule::toVariantHash() const
   return hash;
 }
 
-bool RssDownloadRule::operator==(const RssDownloadRule &other) {
+bool RssDownloadRule::operator==(const RssDownloadRule &other) const {
   return m_name == other.name();
 }
 
 void RssDownloadRule::setSavePath(const QString &save_path)
 {
   if (!save_path.isEmpty() && QDir(save_path) != QDir(Preferences().getSavePath()))
-    m_savePath = save_path;
+    m_savePath = fsutils::fromNativePath(save_path);
   else
     m_savePath = QString();
 }
@@ -122,7 +122,10 @@ QStringList RssDownloadRule::findMatchingArticles(const RssFeedPtr& feed) const
 {
   QStringList ret;
   const RssArticleHash& feed_articles = feed->articleHash();
-  for (RssArticleHash::ConstIterator artIt = feed_articles.begin(); artIt != feed_articles.end(); artIt++) {
+
+  RssArticleHash::ConstIterator artIt = feed_articles.begin();
+  RssArticleHash::ConstIterator artItend = feed_articles.end();
+  for ( ; artIt != artItend ; ++artIt) {
     const QString title = artIt.value()->title();
     if (matches(title))
       ret << title;

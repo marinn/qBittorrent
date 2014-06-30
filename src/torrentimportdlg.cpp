@@ -38,6 +38,7 @@
 #include "qbtsession.h"
 #include "torrentpersistentdata.h"
 #include "iconprovider.h"
+#include "fs_utils.h"
 
 using namespace libtorrent;
 
@@ -61,7 +62,7 @@ TorrentImportDlg::~TorrentImportDlg()
 
 void TorrentImportDlg::on_browseTorrentBtn_clicked()
 {
-  QIniSettings settings(QString::fromUtf8("qBittorrent"), QString::fromUtf8("qBittorrent"));
+  QIniSettings settings;
   const QString default_dir = settings.value(QString::fromUtf8("MainWindowLastDir"), QDir::homePath()).toString();
   // Ask for a torrent file
   m_torrentPath = QFileDialog::getOpenFileName(this, tr("Torrent file to import"), default_dir, tr("Torrent files (*.torrent)"));
@@ -74,17 +75,13 @@ void TorrentImportDlg::on_browseTorrentBtn_clicked()
 
 void TorrentImportDlg::on_browseContentBtn_clicked()
 {
-  QIniSettings settings(QString::fromUtf8("qBittorrent"), QString::fromUtf8("qBittorrent"));
+  QIniSettings settings;
   const QString default_dir = settings.value(QString::fromUtf8("TorrentImport/LastContentDir"), QDir::homePath()).toString();
   if (t->num_files() == 1) {
     // Single file torrent
-#if LIBTORRENT_VERSION_MINOR > 15
-    const QString file_name = misc::fileName(misc::toQStringU(t->file_at(0).path));
-#else
-    const QString file_name = misc::toQStringU(t->file_at(0).path.filename());
-#endif
+    const QString file_name = fsutils::fileName(misc::toQStringU(t->file_at(0).path));
     qDebug("Torrent has only one file: %s", qPrintable(file_name));
-    QString extension = misc::file_extension(file_name);
+    QString extension = fsutils::fileExtension(file_name);
     qDebug("File extension is : %s", qPrintable(extension));
     QString filter;
     if (!extension.isEmpty()) {
@@ -99,11 +96,7 @@ void TorrentImportDlg::on_browseContentBtn_clicked()
       return;
     }
     // Update display
-#if defined(Q_WS_WIN) || defined(Q_OS_OS2)
-    ui->lineContent->setText(m_contentPath.replace("/", "\\"));
-#else
-    ui->lineContent->setText(m_contentPath);
-#endif
+    ui->lineContent->setText(fsutils::toNativePath(m_contentPath));
     // Check file size
     const qint64 file_size = QFile(m_contentPath).size();
     if (t->file_at(0).size == file_size) {
@@ -115,7 +108,7 @@ void TorrentImportDlg::on_browseContentBtn_clicked()
       ui->checkSkipCheck->setEnabled(false);
     }
     // Handle file renaming
-    QStringList parts = m_contentPath.replace("\\", "/").split("/");
+    QStringList parts = m_contentPath.split("/");
     QString new_file_name = parts.takeLast();
     if (new_file_name != file_name) {
       qDebug("The file has been renamed");
@@ -135,23 +128,16 @@ void TorrentImportDlg::on_browseContentBtn_clicked()
       return;
     }
     // Update the display
-#if defined(Q_WS_WIN) || defined(Q_OS_OS2)
-    ui->lineContent->setText(m_contentPath.replace("/", "\\"));
-#else
-    ui->lineContent->setText(m_contentPath);
-#endif
+    ui->lineContent->setText(fsutils::toNativePath(m_contentPath));
     bool size_mismatch = false;
     QDir content_dir(m_contentPath);
+    content_dir.cdUp();
     // Check file sizes
     for (int i=0; i<t->num_files(); ++i) {
-#if LIBTORRENT_VERSION_MINOR > 15
       const QString rel_path = misc::toQStringU(t->file_at(i).path);
-#else
-      const QString rel_path = misc::toQStringU(t->file_at(i).path.string());
-#endif
-      if (QFile(QDir::cleanPath(content_dir.absoluteFilePath(rel_path))).size() != t->file_at(i).size) {
+      if (QFile(fsutils::expandPath(content_dir.absoluteFilePath(rel_path))).size() != t->file_at(i).size) {
         qDebug("%s is %lld",
-               qPrintable(QDir::cleanPath(content_dir.absoluteFilePath(rel_path))), (long long int) QFile(QDir::cleanPath(content_dir.absoluteFilePath(rel_path))).size());
+               qPrintable(fsutils::expandPath(content_dir.absoluteFilePath(rel_path))), (long long int) QFile(fsutils::expandPath(content_dir.absoluteFilePath(rel_path))).size());
         qDebug("%s is %lld",
                qPrintable(rel_path), (long long int)t->file_at(i).size);
         size_mismatch = true;
@@ -211,9 +197,9 @@ void TorrentImportDlg::importTorrent()
     qDebug("Adding the torrent to the session...");
     QBtSession::instance()->addTorrent(torrent_path);
     // Remember the last opened folder
-    QIniSettings settings(QString::fromUtf8("qBittorrent"), QString::fromUtf8("qBittorrent"));
-    settings.setValue(QString::fromUtf8("MainWindowLastDir"), torrent_path);
-    settings.setValue("TorrentImport/LastContentDir", content_path);
+    QIniSettings settings;
+    settings.setValue(QString::fromUtf8("MainWindowLastDir"), fsutils::fromNativePath(torrent_path));
+    settings.setValue("TorrentImport/LastContentDir", fsutils::fromNativePath(content_path));
     return;
   }
   qDebug() << Q_FUNC_INFO << "EXIT";
@@ -224,7 +210,7 @@ void TorrentImportDlg::loadTorrent(const QString &torrent_path)
 {
   // Load the torrent file
   try {
-    t = new torrent_info(torrent_path.toUtf8().constData());
+    t = new torrent_info(fsutils::toNativePath(torrent_path).toUtf8().constData());
     if (!t->is_valid() || t->num_files() == 0)
       throw std::exception();
   } catch(std::exception&) {
@@ -233,15 +219,8 @@ void TorrentImportDlg::loadTorrent(const QString &torrent_path)
     QMessageBox::warning(this, tr("Invalid torrent file"), tr("This is not a valid torrent file."));
     return;
   }
-  // The torrent file is valid
-  misc::truncateRootFolder(t);
   // Update display
-#if defined(Q_WS_WIN) || defined(Q_OS_OS2)
-  QString tmp = torrent_path;
-  ui->lineTorrent->setText(tmp.replace("/", "\\"));
-#else
-  ui->lineTorrent->setText(torrent_path);
-#endif
+  ui->lineTorrent->setText(fsutils::toNativePath(torrent_path));
   ui->browseContentBtn->setEnabled(true);
   // Load the file names
   initializeFilesPath();
@@ -252,11 +231,7 @@ void TorrentImportDlg::initializeFilesPath()
   m_filesPath.clear();
   // Loads files path in the torrent
   for (int i=0; i<t->num_files(); ++i) {
-#if LIBTORRENT_VERSION_MINOR > 15
-    m_filesPath << misc::toQStringU(t->file_at(i).path).replace("\\", "/");
-#else
-    m_filesPath << misc::toQStringU(t->file_at(i).path.string()).replace("\\", "/");
-#endif
+    m_filesPath << fsutils::fromNativePath(misc::toQStringU(t->file_at(i).path));
   }
 }
 
@@ -278,13 +253,13 @@ bool TorrentImportDlg::skipFileChecking() const
 
 void TorrentImportDlg::loadSettings()
 {
-  QIniSettings settings(QString::fromUtf8("qBittorrent"), QString::fromUtf8("qBittorrent"));
+  QIniSettings settings;
   restoreGeometry(settings.value("TorrentImportDlg/dimensions").toByteArray());
 }
 
 void TorrentImportDlg::saveSettings()
 {
-  QIniSettings settings(QString::fromUtf8("qBittorrent"), QString::fromUtf8("qBittorrent"));
+  QIniSettings settings;
   settings.setValue("TorrentImportDlg/dimensions", saveGeometry());
 }
 

@@ -36,6 +36,7 @@
 #include <QPointer>
 #include "ui_mainwindow.h"
 #include "qtorrenthandle.h"
+#include "statsdialog.h"
 
 class QBtSession;
 class downloadFromURL;
@@ -70,8 +71,7 @@ class MainWindow : public QMainWindow, private Ui::MainWindow{
 
 public:
   // Construct / Destruct
-  MainWindow(QWidget *parent=0, QStringList torrentCmdLine=QStringList());
-  ~MainWindow();
+  MainWindow(QWidget *parent=0, const QStringList& torrentCmdLine = QStringList());
   // Methods
   QWidget* getCurrentTabWidget() const;
   TransferListWidget* getTransferList() const { return transferList; }
@@ -85,7 +85,7 @@ public slots:
   void downloadFromURLList(const QStringList& urls);
   void updateAltSpeedsBtn(bool alternative);
   void updateNbTorrents();
-  void deleteBTSession();
+  void shutdownCleanUp();
 
 protected slots:
   // GUI related slots
@@ -93,6 +93,7 @@ protected slots:
   void dragEnterEvent(QDragEnterEvent *event);
   void toggleVisibility(QSystemTrayIcon::ActivationReason e = QSystemTrayIcon::Trigger);
   void on_actionAbout_triggered();
+  void on_actionStatistics_triggered();
   void on_actionCreate_torrent_triggered();
   void on_actionWebsite_triggered() const;
   void on_actionBugReport_triggered() const;
@@ -107,10 +108,12 @@ protected slots:
   void tab_changed(int);
   void on_actionLock_qBittorrent_triggered();
   void defineUILockPassword();
+  void clearUILockPassword();
   bool unlockUI();
   void notifyOfUpdate(QString);
   void showConnectionSettings();
   void minimizeWindow();
+  void updateTrayIconMenu();
   // Keyboard shortcuts
   void createKeyboardShortcuts();
   void displayTransferTab() const;
@@ -128,6 +131,7 @@ protected slots:
   void addTorrent(QString path);
   void addUnauthenticatedTracker(const QPair<QTorrentHandle,QString> &tracker);
   void processDownloadedFiles(QString path, QString url);
+  void processNewMagnetLink(const QString& link);
   void finishedTorrent(const QTorrentHandle& h) const;
   void askRecursiveTorrentDownloadConfirmation(const QTorrentHandle &h);
   // Options slots
@@ -135,9 +139,8 @@ protected slots:
   void optionsSaved();
   // HTTP slots
   void on_actionDownload_from_URL_triggered();
-#if defined(Q_WS_WIN) || defined(Q_WS_MAC)
-  void handleUpdateCheckFinished(bool update_available, QString new_version);
-  void handleUpdateInstalled(QString error_msg);
+#if defined(Q_OS_WIN) || defined(Q_OS_MAC)
+  void handleUpdateCheckFinished(bool update_available, QString new_version, bool invokedByUser);
 #endif
 
 protected:
@@ -162,6 +165,7 @@ private:
   QPointer<options_imp> options;
   QPointer<consoleDlg> console;
   QPointer<about> aboutDlg;
+  QPointer<StatsDialog> statsDlg;
   QPointer<TorrentCreatorDlg> createTorrentDlg;
   QPointer<downloadFromURL> downloadFromURLDialog;
   QPointer<QSystemTrayIcon> systrayIcon;
@@ -193,6 +197,9 @@ private:
   // Power Management
   PowerManagement *m_pwr;
   QTimer *preventTimer;
+#if defined(Q_OS_WIN) || defined(Q_OS_MAC)
+  QTimer programUpdateTimer;
+#endif
 
 private slots:
     void on_actionSearch_engine_triggered();
@@ -207,6 +214,9 @@ private slots:
     void on_actionAutoShutdown_system_toggled(bool );
     // Check for active torrents and set preventing from suspend state
     void checkForActiveTorrents();
+#if defined(Q_OS_WIN) || defined(Q_OS_MAC)
+    void checkProgramUpdate();
+#endif
 };
 
 #endif

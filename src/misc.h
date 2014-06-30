@@ -42,6 +42,7 @@
 #include <QPoint>
 #include <QFile>
 #include <QDir>
+#include <QUrl>
 #ifndef DISABLE_GUI
 #include <QIcon>
 #endif
@@ -49,103 +50,70 @@
 const qlonglong MAX_ETA = 8640000;
 
 /*  Miscellaneaous functions that can be useful */
-class misc : public QObject{
-  Q_OBJECT
-
-private:
-  misc(); // Forbidden
-
-public:
-  static inline QString toQString(const std::string &str) {
+namespace misc
+{
+  inline QString toQString(const std::string &str) {
     return QString::fromLocal8Bit(str.c_str());
   }
 
-  static inline QString toQString(const char* str) {
+  inline QString toQString(const char* str) {
     return QString::fromLocal8Bit(str);
   }
 
-  static inline QString toQStringU(const std::string &str) {
+  inline QString toQStringU(const std::string &str) {
     return QString::fromUtf8(str.c_str());
   }
 
-  static inline QString toQStringU(const char* str) {
+  inline QString toQStringU(const char* str) {
     return QString::fromUtf8(str);
   }
 
-  static inline QString toQString(const libtorrent::sha1_hash &hash) {
+  inline QString toQString(const libtorrent::sha1_hash &hash) {
     char out[41];
-    to_hex((char const*)&hash[0], libtorrent::sha1_hash::size, out);
+	 libtorrent::to_hex((char const*)&hash[0], libtorrent::sha1_hash::size, out);
     return QString(out);
   }
 
-  static inline QString file_extension(const QString &filename) {
-    QString extension;
-    int point_index = filename.lastIndexOf(".");
-    if (point_index >= 0) {
-      extension = filename.mid(point_index+1);
-    }
-    return extension;
-  }
-
 #ifndef DISABLE_GUI
-  static void shutdownComputer(bool sleep=false);
+  void shutdownComputer(bool sleep=false);
 #endif
 
-  static QString parseHtmlLinks(const QString &raw_text);
+  QString parseHtmlLinks(const QString &raw_text);
 
-  static quint64 computePathSize(QString path);
-
-  static QString truncateRootFolder(boost::intrusive_ptr<libtorrent::torrent_info> t);
-  static QString truncateRootFolder(libtorrent::torrent_handle h);
-  static QString fixFileNames(QString path);
-
-  static QString updateLabelInSavePath(QString defaultSavePath, QString save_path, const QString &old_label, const QString &new_label);
-
-  static bool sameFiles(const QString &path1, const QString &path2);
-  static bool isUrl(const QString &s);
-  static QString toValidFileSystemName(QString filename);
-  static bool isValidFileSystemName(const QString& filename);
-
-  /* Ported from Qt4 to drop dependency on QtGui */
-  static QString QDesktopServicesDataLocation();
-  static QString QDesktopServicesCacheLocation();
-  static QString QDesktopServicesDownloadLocation();
-  /* End of Qt4 code */
+  bool isUrl(const QString &s);
 
 #ifndef DISABLE_GUI
   // Get screen center
-  static QPoint screenCenter(QWidget *win);
+  QPoint screenCenter(QWidget *win);
 #endif
-  static int pythonVersion();
-  static QString searchEngineLocation();
-  static QString BTBackupLocation();
-  static QString cacheLocation();
-  static long long freeDiskSpaceOnPath(QString path);
+  int pythonVersion();
   // return best userfriendly storage unit (B, KiB, MiB, GiB, TiB)
   // use Binary prefix standards from IEC 60027-2
   // see http://en.wikipedia.org/wiki/Kilobyte
   // value must be given in bytes
-  static QString friendlyUnit(qreal val);
-  static bool isPreviewable(QString extension);
-  static QString branchPath(QString file_path, bool uses_slashes=false);
-  static QString fileName(QString file_path);
-  static QString magnetUriToName(QString magnet_uri);
-  static QString magnetUriToHash(QString magnet_uri);
-  static QString bcLinkToMagnet(QString bc_link);
-  // Replace ~ in path
-  static QString expandPath(QString path);
+  QString friendlyUnit(qreal val, bool is_speed = false);
+  bool isPreviewable(const QString& extension);
+  QString magnetUriToName(const QString& magnet_uri);
+  QString magnetUriToHash(const QString& magnet_uri);
+  QList<QUrl> magnetUriToTrackers(const QString& magnet_uri);
+  QString bcLinkToMagnet(QString bc_link);
   // Take a number of seconds and return an user-friendly
   // time duration like "1d 2h 10m".
-  static QString userFriendlyDuration(qlonglong seconds);
-  static QString getUserIDString();
+  QString userFriendlyDuration(qlonglong seconds);
+  QString getUserIDString();
 
   // Convert functions
-  static QStringList toStringList(const QList<bool> &l);
-  static QList<int> intListfromStringList(const QStringList &l);
-  static QList<bool> boolListfromStringList(const QStringList &l);
+  QStringList toStringList(const QList<bool> &l);
+  QList<int> intListfromStringList(const QStringList &l);
+  QList<bool> boolListfromStringList(const QStringList &l);
 
-  static bool isValidTorrentFile(const QString &path);
-};
+  QString toQString(time_t t);
+  QString accurateDoubleToString(const double &n, const int &precision);
+
+#ifndef DISABLE_GUI
+  bool naturalSort(QString left, QString right, bool& result);
+#endif
+}
 
 //  Trick to get a portable sleep() function
 class SleeperThread : public QThread {

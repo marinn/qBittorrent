@@ -37,11 +37,11 @@
 #include <QIcon>
 #include <QVBoxLayout>
 #include <QMenu>
-#include <QInputDialog>
 #include <QDragMoveEvent>
 #include <QStandardItemModel>
 #include <QMessageBox>
 #include <QScrollBar>
+#include <QLabel>
 
 #include "transferlistdelegate.h"
 #include "transferlistwidget.h"
@@ -49,6 +49,8 @@
 #include "qinisettings.h"
 #include "torrentmodel.h"
 #include "iconprovider.h"
+#include "fs_utils.h"
+#include "autoexpandabledialog.h"
 
 class LabelFiltersList: public QListWidget {
   Q_OBJECT
@@ -62,6 +64,10 @@ public:
     // Accept drop
     setAcceptDrops(true);
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+    setStyleSheet("QListWidget { background: transparent; border: 0 }");
+#if defined(Q_OS_MAC)
+    setAttribute(Qt::WA_MacShowFocusRect, false);
+#endif
   }
 
   // Redefine addItem() to make sure the list stays sorted
@@ -158,13 +164,17 @@ public:
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     // Height is fixed (sizeHint().height() is used)
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    setStyleSheet("QListWidget { background: transparent; border: 0 }");
+#if defined(Q_OS_MAC)
+    setAttribute(Qt::WA_MacShowFocusRect, false);
+#endif
   }
 
 protected:
   QSize sizeHint() const {
     QSize size = QListWidget::sizeHint();
     // Height should be exactly the height of the content
-    size.setHeight(contentsSize().height() + 2 * frameWidth());
+    size.setHeight(contentsSize().height() + 2 * frameWidth()+6);
     return size;
   }
 
@@ -190,8 +200,19 @@ public:
     // Construct lists
     vLayout = new QVBoxLayout();
     vLayout->setContentsMargins(0, 4, 0, 4);
+    QFont font;
+    font.setBold(true);
+    font.setCapitalization(QFont::SmallCaps);
+    QLabel *torrentsLabel = new QLabel(tr("Torrents"));
+    torrentsLabel->setIndent(2);
+    torrentsLabel->setFont(font);
+    vLayout->addWidget(torrentsLabel);
     statusFilters = new StatusFiltersWidget(this);
     vLayout->addWidget(statusFilters);
+    QLabel *labelsLabel = new QLabel(tr("Labels"));
+    labelsLabel->setIndent(2);
+    labelsLabel->setFont(font);
+    vLayout->addWidget(labelsLabel);
     labelFilters = new LabelFiltersList(this);
     vLayout->addWidget(labelFilters);
     setLayout(vLayout);
@@ -260,7 +281,7 @@ public:
   }
 
   void saveSettings() const {
-    QIniSettings settings(QString::fromUtf8("qBittorrent"), QString::fromUtf8("qBittorrent"));
+    QIniSettings settings;
     settings.beginGroup(QString::fromUtf8("TransferListFilters"));
     settings.setValue("selectedFilterIndex", QVariant(statusFilters->currentRow()));
     //settings.setValue("selectedLabelIndex", QVariant(labelFilters->currentRow()));
@@ -268,7 +289,7 @@ public:
   }
 
   void loadSettings() {
-    QIniSettings settings(QString::fromUtf8("qBittorrent"), QString::fromUtf8("qBittorrent"));
+    QIniSettings settings;
     statusFilters->setCurrentRow(settings.value("TransferListFilters/selectedFilterIndex", 0).toInt());
     const QStringList label_list = Preferences().getTorrentLabels();
     foreach (const QString &label, label_list) {
@@ -301,8 +322,8 @@ protected slots:
     }
   }
 
-  void addLabel(QString label) {
-    label = misc::toValidFileSystemName(label.trimmed());
+  void addLabel(QString& label) {
+    label = fsutils::toValidFileSystemName(label.trimmed());
     if (label.isEmpty() || customLabels.contains(label)) return;
     QListWidgetItem *newLabel = new QListWidgetItem();
     newLabel->setText(label + " (0)");
@@ -347,9 +368,9 @@ protected slots:
         bool invalid;
         do {
           invalid = false;
-          label = QInputDialog::getText(this, tr("New Label"), tr("Label:"), QLineEdit::Normal, label, &ok);
+          label = AutoExpandableDialog::getText(this, tr("New Label"), tr("Label:"), QLineEdit::Normal, label, &ok);
           if (ok && !label.isEmpty()) {
-            if (misc::isValidFileSystemName(label)) {
+            if (fsutils::isValidFileSystemName(label)) {
               addLabel(label);
             } else {
               QMessageBox::warning(this, tr("Invalid label name"), tr("Please don't use any special characters in the label name."));
@@ -426,6 +447,8 @@ protected slots:
     if (!label.isEmpty()) {
       if (!customLabels.contains(label)) {
         addLabel(label);
+        // addLabel may have changed the label, update the model accordingly.
+        torrentItem->setData(TorrentModelItem::TR_LABEL, label);
       }
       // Update label counter
       Q_ASSERT(customLabels.contains(label));

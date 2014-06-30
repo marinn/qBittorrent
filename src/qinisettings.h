@@ -38,8 +38,8 @@ class QIniSettings : public QSettings {
   Q_DISABLE_COPY (QIniSettings)
 
 public:
-  QIniSettings(const QString &organization, const QString &application = QString(), QObject *parent = 0 ):
-#ifdef Q_WS_WIN
+  QIniSettings(const QString &organization = "qBittorrent", const QString &application = "qBittorrent", QObject *parent = 0 ):
+#ifdef Q_OS_WIN
       QSettings(QSettings::IniFormat, QSettings::UserScope, organization, application, parent)
 #else
       QSettings(organization, application, parent)
@@ -52,7 +52,7 @@ public:
 
   }
 
-#ifdef Q_WS_WIN
+#ifdef Q_OS_WIN
   QVariant value(const QString & key, const QVariant &defaultValue = QVariant()) const {
     QString key_tmp(key);
     QVariant ret = QSettings::value(key_tmp);
@@ -63,7 +63,7 @@ public:
 
   void setValue(const QString &key, const QVariant &val) {
     QString key_tmp(key);
-    if (format() == QSettings::NativeFormat)
+    if (format() == QSettings::NativeFormat) // Using registry, don't touch replace here
       key_tmp.replace("\\", "/");
     QSettings::setValue(key_tmp, val);
   }

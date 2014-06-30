@@ -30,14 +30,15 @@
 
 #include <QFileDialog>
 #include <QMessageBox>
-#include <QInputDialog>
 
 #include "torrentpersistentdata.h"
 #include "torrentcreatordlg.h"
+#include "fs_utils.h"
 #include "misc.h"
 #include "qinisettings.h"
 #include "torrentcreatorthread.h"
 #include "iconprovider.h"
+#include "qbtsession.h"
 
 const uint NB_PIECES_MIN = 1200;
 const uint NB_PIECES_MAX = 2200;
@@ -68,15 +69,12 @@ TorrentCreatorDlg::~TorrentCreatorDlg() {
 }
 
 void TorrentCreatorDlg::on_addFolder_button_clicked() {
-  QIniSettings settings("qBittorrent", "qBittorrent");
+  QIniSettings settings;
   QString last_path = settings.value("CreateTorrent/last_add_path", QDir::homePath()).toString();
   QString dir = QFileDialog::getExistingDirectory(this, tr("Select a folder to add to the torrent"), last_path, QFileDialog::ShowDirsOnly);
   if (!dir.isEmpty()) {
     settings.setValue("CreateTorrent/last_add_path", dir);
-#if defined(Q_WS_WIN) || defined(Q_OS_OS2)
-    dir.replace("/", "\\");
-#endif
-    textInputPath->setText(dir);
+    textInputPath->setText(fsutils::toNativePath(dir));
     // Update piece size
     if (checkAutoPieceSize->isChecked())
       updateOptimalPieceSize();
@@ -84,15 +82,12 @@ void TorrentCreatorDlg::on_addFolder_button_clicked() {
 }
 
 void TorrentCreatorDlg::on_addFile_button_clicked() {
-  QIniSettings settings("qBittorrent", "qBittorrent");
+  QIniSettings settings;
   QString last_path = settings.value("CreateTorrent/last_add_path", QDir::homePath()).toString();
   QString file = QFileDialog::getOpenFileName(this, tr("Select a file to add to the torrent"), last_path);
   if (!file.isEmpty()) {
-    settings.setValue("CreateTorrent/last_add_path", misc::branchPath(file));
-#if defined(Q_WS_WIN) || defined(Q_OS_OS2)
-    file.replace("/", "\\");
-#endif
-    textInputPath->setText(file);
+    settings.setValue("CreateTorrent/last_add_path", fsutils::branchPath(file));
+    textInputPath->setText(fsutils::toNativePath(file));
     // Update piece size
     if (checkAutoPieceSize->isChecked())
       updateOptimalPieceSize();
@@ -105,8 +100,8 @@ int TorrentCreatorDlg::getPieceSize() const {
 
 // Main function that create a .torrent file
 void TorrentCreatorDlg::on_createButton_clicked() {
-  QString input = textInputPath->text().trimmed();
-  if (input.endsWith(QDir::separator()))
+  QString input = fsutils::fromNativePath(textInputPath->text()).trimmed();
+  if (input.endsWith("/"))
     input.chop(1);
   if (input.isEmpty()) {
     QMessageBox::critical(0, tr("No input path set"), tr("Please type an input path first"));
@@ -116,12 +111,12 @@ void TorrentCreatorDlg::on_createButton_clicked() {
   if (!trackers_list->toPlainText().trimmed().isEmpty())
     saveTrackerList();
 
-  QIniSettings settings("qBittorrent", "qBittorrent");
+  QIniSettings settings;
   QString last_path = settings.value("CreateTorrent/last_save_path", QDir::homePath()).toString();
 
   QString destination = QFileDialog::getSaveFileName(this, tr("Select destination torrent file"), last_path, tr("Torrent Files")+QString::fromUtf8(" (*.torrent)"));
   if (!destination.isEmpty()) {
-    settings.setValue("CreateTorrent/last_save_path", misc::branchPath(destination));
+    settings.setValue("CreateTorrent/last_save_path", fsutils::branchPath(destination));
     if (!destination.toUpper().endsWith(".TORRENT"))
       destination += QString::fromUtf8(".torrent");
   } else {
@@ -155,27 +150,24 @@ void TorrentCreatorDlg::handleCreationSuccess(QString path, QString branch_path)
   // Remove busy cursor
   setCursor(QCursor(Qt::ArrowCursor));
   if (checkStartSeeding->isChecked()) {
-    QString root_folder;
     // Create save path temp data
     boost::intrusive_ptr<torrent_info> t;
     try {
-      t = new torrent_info(path.toUtf8().data());
-      root_folder = misc::truncateRootFolder(t);
+      t = new torrent_info(fsutils::toNativePath(path).toUtf8().data());
     } catch(std::exception&) {
       QMessageBox::critical(0, tr("Torrent creation"), tr("Created torrent file is invalid. It won't be added to download list."));
       return;
     }
     QString hash = misc::toQString(t->info_hash());
     QString save_path = branch_path;
-    if (!root_folder.isEmpty()) {
-      save_path = QDir(save_path).absoluteFilePath(root_folder);
-    }
     TorrentTempData::setSavePath(hash, save_path);
     // Enable seeding mode (do not recheck the files)
     TorrentTempData::setSeedingMode(hash, true);
     emit torrent_to_seed(path);
+    if (checkIgnoreShareLimits->isChecked())
+      QBtSession::instance()->setMaxRatioPerTorrent(hash, -1);
   }
-  QMessageBox::information(0, tr("Torrent creation"), tr("Torrent was created successfully:")+" "+path);
+  QMessageBox::information(0, tr("Torrent creation"), tr("Torrent was created successfully:")+" "+fsutils::toNativePath(path));
   close();
 }
 
@@ -207,6 +199,7 @@ void TorrentCreatorDlg::setInteractionEnabled(bool enabled)
   check_private->setEnabled(enabled);
   checkStartSeeding->setEnabled(enabled);
   createButton->setEnabled(enabled);
+  checkIgnoreShareLimits->setEnabled(enabled && checkStartSeeding->isChecked());
   //cancelButton->setEnabled(!enabled);
 }
 
@@ -226,7 +219,7 @@ void TorrentCreatorDlg::on_checkAutoPieceSize_clicked(bool checked)
 
 void TorrentCreatorDlg::updateOptimalPieceSize()
 {
-  quint64 torrent_size = misc::computePathSize(textInputPath->text());
+  quint64 torrent_size = fsutils::computePathSize(textInputPath->text());
   qDebug("Torrent size is %lld", torrent_size);
   if (torrent_size == 0) return;
   int i = 0;
@@ -250,26 +243,28 @@ void TorrentCreatorDlg::updateOptimalPieceSize()
 
 void TorrentCreatorDlg::saveTrackerList()
 {
-  QIniSettings settings(QString::fromUtf8("qBittorrent"), QString::fromUtf8("qBittorrent"));
+  QIniSettings settings;
   settings.setValue("CreateTorrent/TrackerList", trackers_list->toPlainText());
 }
 
 void TorrentCreatorDlg::loadTrackerList()
 {
-  QIniSettings settings(QString::fromUtf8("qBittorrent"), QString::fromUtf8("qBittorrent"));
+  QIniSettings settings;
   trackers_list->setPlainText(settings.value("CreateTorrent/TrackerList", "").toString());
 }
 
 void TorrentCreatorDlg::saveSettings()
 {
-  QIniSettings settings(QString::fromUtf8("qBittorrent"), QString::fromUtf8("qBittorrent"));
+  QIniSettings settings;
   settings.setValue("CreateTorrent/dimensions", saveGeometry());
+  settings.setValue("CreateTorrent/IgnoreRatio", checkIgnoreShareLimits->isChecked());
 }
 
 void TorrentCreatorDlg::loadSettings()
 {
-  QIniSettings settings(QString::fromUtf8("qBittorrent"), QString::fromUtf8("qBittorrent"));
+  QIniSettings settings;
   restoreGeometry(settings.value("CreateTorrent/dimensions").toByteArray());
+  checkIgnoreShareLimits->setChecked(settings.value("CreateTorrent/IgnoreRatio").toBool());
 }
 
 void TorrentCreatorDlg::closeEvent(QCloseEvent *event)

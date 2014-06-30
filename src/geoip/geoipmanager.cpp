@@ -64,7 +64,7 @@
 #include <QFile>
 #include <QChar>
 
-#include "misc.h"
+#include "fs_utils.h"
 
 using namespace libtorrent;
 
@@ -72,7 +72,7 @@ QString GeoIPManager::geoipFolder(bool embedded) {
 #ifdef WITH_GEOIP_EMBEDDED
   if (embedded)
     return ":/geoip/";
-  return misc::QDesktopServicesDataLocation()+"geoip"+QDir::separator();
+  return fsutils::QDesktopServicesDataLocation()+"geoip"+"/";
 #else
   Q_UNUSED(embedded);
   if (QFile::exists("/usr/local/share/GeoIP/GeoIP.dat"))
@@ -101,7 +101,7 @@ void GeoIPManager::exportEmbeddedDb() {
     }
     // Remove destination files
     if (QFile::exists(geoipDBpath(false)))
-      QFile::remove(geoipDBpath(false));
+      fsutils::forceRemove(geoipDBpath(false));
     // Copy from executable to hard disk
     qDebug("%s -> %s", qPrintable(geoipDBpath(true)), qPrintable(geoipDBpath(false)));
     if (!QFile::copy(geoipDBpath(true), geoipDBpath(false))) {

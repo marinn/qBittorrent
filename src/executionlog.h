@@ -37,8 +37,8 @@ QT_BEGIN_NAMESPACE
 namespace Ui {
     class ExecutionLog;
 }
-class LogListWidget;
 QT_END_NAMESPACE
+class LogListWidget;
 
 class ExecutionLog : public QWidget
 {
@@ -57,7 +57,6 @@ private:
 
   LogListWidget *m_logList;
   LogListWidget *m_banList;
-  int m_maxLines;
 };
 
 #endif // EXECUTIONLOG_H

@@ -41,6 +41,7 @@
 #include "ui_trackersadditiondlg.h"
 #include "downloadthread.h"
 #include "qtorrenthandle.h"
+#include "fs_utils.h"
 
 class TrackersAdditionDlg : public QDialog, private Ui::TrackersAdditionDlg{
   Q_OBJECT
@@ -53,9 +54,6 @@ public:
     setupUi(this);
     // Icons
     uTorrentListButton->setIcon(IconProvider::instance()->getIcon("download"));
-    // As a default, use torrentz.com link
-    list_url->setText("http://www.torrentz.com/announce_"+h.hash());
-    list_url->setCursorPosition(0);
   }
 
   ~TrackersAdditionDlg() {}
@@ -82,15 +80,18 @@ public slots:
       setCursor(Qt::ArrowCursor);
       uTorrentListButton->setEnabled(true);
       sender()->deleteLater();
+      fsutils::forceRemove(path);
       return;
     }
     QList<QUrl> existingTrackers;
     // Load from torrent handle
     std::vector<libtorrent::announce_entry> tor_trackers = h.trackers();
+
     std::vector<libtorrent::announce_entry>::iterator itr = tor_trackers.begin();
-    while(itr != tor_trackers.end()) {
+    std::vector<libtorrent::announce_entry>::iterator itrend = tor_trackers.end();
+    while(itr != itrend) {
       existingTrackers << QUrl(misc::toQString(itr->url));
-      itr++;
+      ++itr;
     }
     // Load from current user list
     QStringList tmp = trackers_list->toPlainText().split("\n");
@@ -114,7 +115,7 @@ public slots:
     }
     // Clean up
     list_file.close();
-    list_file.remove();
+    fsutils::forceRemove(path);
     //To restore the cursor ...
     setCursor(Qt::ArrowCursor);
     uTorrentListButton->setEnabled(true);

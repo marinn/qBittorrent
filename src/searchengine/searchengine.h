@@ -44,6 +44,7 @@
 class DownloadThread;
 class SearchEngine;
 class MainWindow;
+class LineEdit;
 
 QT_BEGIN_NAMESPACE
 class QTimer;
@@ -53,8 +54,6 @@ class SearchEngine : public QWidget, public Ui::search_engine{
   Q_OBJECT
   Q_DISABLE_COPY(SearchEngine)
 
-public:
-  enum SearchColumn { NAME, SIZE, SEEDS, LEECHS, ENGINE_URL, DL_LINK, DESC_LINK, NB_SEARCH_COLUMNS };
 private:
   enum PluginColumn { PL_DL_LINK, PL_NAME, PL_SIZE, PL_SEEDS, PL_LEECHS, PL_ENGINE_URL, PL_DESC_LINK, NB_PLUGIN_COLUMNS };
 
@@ -99,18 +98,14 @@ protected slots:
   void searchFinished(int exitcode,QProcess::ExitStatus);
   void readSearchOutput();
   void searchStarted();
-  void startSearchHistory();
   void updateNova();
-  void saveSearchHistory();
   void on_enginesButton_clicked();
   void propagateSectionResized(int index, int oldsize , int newsize);
   void saveResultsColumnsWidth();
   void downloadFinished(int exitcode, QProcess::ExitStatus);
-  void displayPatternContextMenu(QPoint);
-  void createCompleter();
   void fillCatCombobox();
   void searchTextEdited(QString);
-#ifdef Q_WS_WIN
+#ifdef Q_OS_WIN
   bool addPythonPathToEnv();
   void installPython();
   void pythonDownloadSuccess(QString url, QString file_path);
@@ -122,21 +117,20 @@ private slots:
 
 private:
   // Search related
+  LineEdit* search_pattern;
   QProcess *searchProcess;
   QList<QProcess*> downloaders;
   bool search_stopped;
   bool no_search_results;
   QByteArray search_result_line_truncated;
   unsigned long nb_search_results;
-  QPointer<QCompleter> searchCompleter;
-  QStringListModel searchHistory;
   SupportedEngines *supported_engines;
   QTimer *searchTimeout;
   QPointer<SearchTab> currentSearchTab;
   QList<QPointer<SearchTab> > all_tab; // To store all tabs
   const SearchCategories full_cat_names;
   MainWindow *mp_mainWindow;
-#ifdef Q_WS_WIN
+#ifdef Q_OS_WIN
   bool has_python;
 #endif
 };

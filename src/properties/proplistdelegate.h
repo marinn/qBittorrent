@@ -43,8 +43,12 @@
 #include "misc.h"
 #include "propertieswidget.h"
 
-#ifdef Q_WS_WIN
+#ifdef Q_OS_WIN
+#if (QT_VERSION < QT_VERSION_CHECK(5, 0, 0))
 #include <QPlastiqueStyle>
+#else
+#include <QProxyStyle>
+#endif
 #endif
 
 // Defines for properties list columns
@@ -75,24 +79,24 @@ public:
       break;
     case PROGRESS:{
       if (index.data().toDouble() >= 0) {
-          QStyleOptionProgressBarV2 newopt;
-          qreal progress = index.data().toDouble()*100.;
-          newopt.rect = opt.rect;
-          // We don't want to display 100% unless
-          // the torrent is really complete
-          if (progress > 99.94 && progress < 100.)
-            progress = 99.9;
-          newopt.text = QString(QByteArray::number(progress, 'f', 1))+QString::fromUtf8("%");
-          newopt.progress = (int)progress;
-          newopt.maximum = 100;
-          newopt.minimum = 0;
-          newopt.state |= QStyle::State_Enabled;
-          newopt.textVisible = true;
-#ifndef Q_WS_WIN
-          QApplication::style()->drawControl(QStyle::CE_ProgressBar, &newopt, painter);
+        QStyleOptionProgressBarV2 newopt;
+        qreal progress = index.data().toDouble()*100.;
+        newopt.rect = opt.rect;
+        newopt.text = misc::accurateDoubleToString(progress, 1) + "%";
+        newopt.progress = (int)progress;
+        newopt.maximum = 100;
+        newopt.minimum = 0;
+        newopt.state |= QStyle::State_Enabled;
+        newopt.textVisible = true;
+#ifndef Q_OS_WIN
+        QApplication::style()->drawControl(QStyle::CE_ProgressBar, &newopt, painter);
 #else
           // XXX: To avoid having the progress text on the right of the bar
+#if (QT_VERSION < QT_VERSION_CHECK(5, 0, 0))
           QPlastiqueStyle st;
+#else
+          QProxyStyle st("fusion");
+#endif
           st.drawControl(QStyle::CE_ProgressBar, &newopt, painter, 0);
 #endif
       } else {
@@ -131,16 +135,6 @@ public:
     painter->restore();
   }
 
-  QSize sizeHint(const QStyleOptionViewItem & option, const QModelIndex & index) const {
-    QVariant value = index.data(Qt::FontRole);
-    QFont fnt = value.isValid() ? qvariant_cast<QFont>(value) : option.font;
-    QFontMetrics fontMetrics(fnt);
-    const QString text = index.data(Qt::DisplayRole).toString();
-    QRect textRect = QRect(0, 0, 0, fontMetrics.lineSpacing() * (text.count(QLatin1Char('\n')) + 1));
-    textRect.setHeight(textRect.height()+4);
-    return textRect.size();
-  }
-
   void setEditorData(QWidget *editor, const QModelIndex &index) const {
     QComboBox *combobox = static_cast<QComboBox*>(editor);
     // Set combobox index
@@ -161,11 +155,8 @@ public:
     if (index.column() != PRIORITY) return 0;
     if (properties) {
       QTorrentHandle h = properties->getCurrentTorrent();
-#if LIBTORRENT_VERSION_MINOR > 15
-      if (!h.is_valid() || !h.has_metadata() || h.status(0x0).is_seeding) return 0;
-#else
-      if (!h.is_valid() || !h.has_metadata() || static_cast<libtorrent::torrent_handle>(h).is_seed()) return 0;
-#endif
+      if (!h.is_valid() || !h.has_metadata() || h.status(0x0).is_seeding)
+        return 0;
     }
     if (index.data().toInt() <= 0) {
       // IGNORED or MIXED

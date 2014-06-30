@@ -30,22 +30,24 @@
 
 #include "engineselectdlg.h"
 #include "downloadthread.h"
+#include "fs_utils.h"
 #include "misc.h"
 #include "ico.h"
 #include "searchengine.h"
 #include "pluginsource.h"
 #include "iconprovider.h"
+#include "autoexpandabledialog.h"
 #include <QProcess>
 #include <QHeaderView>
 #include <QMenu>
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QDropEvent>
-#include <QInputDialog>
 #include <QTemporaryFile>
+#include <QMimeData>
 
 enum EngineColumns {ENGINE_NAME, ENGINE_URL, ENGINE_STATE, ENGINE_ID};
-const QString UPDATE_URL = QString("https://raw.github.com/cdumez/qBittorrent/master/src/searchengine/") + (misc::pythonVersion() >= 3 ? "nova3" : "nova") + "/engines/";
+const QString UPDATE_URL = QString("https://raw.github.com/qbittorrent/qBittorrent/master/src/searchengine/") + (misc::pythonVersion() >= 3 ? "nova3" : "nova") + "/engines/";
 
 engineSelectDlg::engineSelectDlg(QWidget *parent, SupportedEngines *supported_engines) : QDialog(parent), supported_engines(supported_engines) {
   setupUi(this);
@@ -75,7 +77,7 @@ engineSelectDlg::~engineSelectDlg() {
 
 void engineSelectDlg::dropEvent(QDropEvent *event) {
   event->acceptProposedAction();
-  QStringList files=event->mimeData()->text().split(QString::fromUtf8("\n"));
+  QStringList files = event->mimeData()->text().split(QString::fromUtf8("\n"));
   foreach (QString file, files) {
     qDebug("dropped %s", qPrintable(file));
     if (misc::isUrl(file)) {
@@ -86,7 +88,7 @@ void engineSelectDlg::dropEvent(QDropEvent *event) {
     if (file.endsWith(".py", Qt::CaseInsensitive)) {
       if (file.startsWith("file:", Qt::CaseInsensitive))
         file = QUrl(file).toLocalFile();
-      QString plugin_name = misc::fileName(file);
+      QString plugin_name = fsutils::fileName(file);
       plugin_name.chop(3); // Remove extension
       installPlugin(file, plugin_name);
     }
@@ -157,7 +159,7 @@ void engineSelectDlg::on_actionUninstall_triggered() {
     }else {
       // Proceed with uninstall
       // remove it from hard drive
-      QDir enginesFolder(misc::searchEngineLocation()+QDir::separator()+"engines");
+      QDir enginesFolder(fsutils::searchEngineLocation() + "/engines");
       QStringList filters;
       filters << id+".*";
       QStringList files = enginesFolder.entryList(filters, QDir::Files, QDir::Unsorted);
@@ -223,7 +225,7 @@ QTreeWidgetItem* engineSelectDlg::findItemWithID(QString id) {
 }
 
 bool engineSelectDlg::isUpdateNeeded(QString plugin_name, qreal new_version) const {
-  qreal old_version = SearchEngine::getPluginVersion(misc::searchEngineLocation()+QDir::separator()+"engines"+QDir::separator()+plugin_name+".py");
+  qreal old_version = SearchEngine::getPluginVersion(fsutils::searchEngineLocation() + "/engines/" + plugin_name + ".py");
   qDebug("IsUpdate needed? tobeinstalled: %.2f, alreadyinstalled: %.2f", new_version, old_version);
   return (new_version > old_version);
 }
@@ -234,17 +236,17 @@ void engineSelectDlg::installPlugin(QString path, QString plugin_name) {
   qDebug("Version to be installed: %.2f", new_version);
   if (!isUpdateNeeded(plugin_name, new_version)) {
     qDebug("Apparently update is not needed, we have a more recent version");
-    QMessageBox::information(this, tr("Search plugin install")+" -- "+tr("qBittorrent"), tr("A more recent version of %1 search engine plugin is already installed.", "%1 is the name of the search engine").arg(plugin_name));
+    QMessageBox::information(this, tr("Search plugin install")+" -- qBittorrent", tr("A more recent version of %1 search engine plugin is already installed.", "%1 is the name of the search engine").arg(plugin_name));
     return;
   }
   // Process with install
-  QString dest_path = misc::searchEngineLocation()+QDir::separator()+"engines"+QDir::separator()+plugin_name+".py";
+  QString dest_path = fsutils::searchEngineLocation() + "/engines/" + plugin_name + ".py";
   bool update = false;
   if (QFile::exists(dest_path)) {
     // Backup in case install fails
     QFile::copy(dest_path, dest_path+".bak");
-    QFile::remove(dest_path);
-    QFile::remove(dest_path+"c");
+    fsutils::forceRemove(dest_path);
+    fsutils::forceRemove(dest_path+"c");
     update = true;
   }
   // Copy the plugin
@@ -255,22 +257,22 @@ void engineSelectDlg::installPlugin(QString path, QString plugin_name) {
   if (!supported_engines->contains(plugin_name)) {
     if (update) {
       // Remove broken file
-      QFile::remove(dest_path);
+      fsutils::forceRemove(dest_path);
       // restore backup
       QFile::copy(dest_path+".bak", dest_path);
-      QFile::remove(dest_path+".bak");
+      fsutils::forceRemove(dest_path+".bak");
       QMessageBox::warning(this, tr("Search plugin install")+" -- "+tr("qBittorrent"), tr("%1 search engine plugin could not be updated, keeping old version.", "%1 is the name of the search engine").arg(plugin_name));
       return;
     } else {
       // Remove broken file
-      QFile::remove(dest_path);
+      fsutils::forceRemove(dest_path);
       QMessageBox::warning(this, tr("Search plugin install")+" -- "+tr("qBittorrent"), tr("%1 search engine plugin could not be installed.", "%1 is the name of the search engine").arg(plugin_name));
       return;
     }
   }
   // Install was successful, remove backup
   if (update) {
-    QFile::remove(dest_path+".bak");
+    fsutils::forceRemove(dest_path+".bak");
   }
   if (update) {
     QMessageBox::information(this, tr("Search plugin install")+" -- "+tr("qBittorrent"), tr("%1 search engine plugin was successfully updated.", "%1 is the name of the search engine").arg(plugin_name));
@@ -303,12 +305,12 @@ void engineSelectDlg::addNewEngine(QString engine_name) {
     setRowColor(pluginsTree->indexOfTopLevelItem(item), "red");
   }
   // Handle icon
-  QString iconPath = misc::searchEngineLocation()+QDir::separator()+"engines"+QDir::separator()+engine->getName()+".png";
+  QString iconPath = fsutils::searchEngineLocation() + "/engines/" + engine->getName() + ".png";
   if (QFile::exists(iconPath)) {
     // Good, we already have the icon
     item->setData(ENGINE_NAME, Qt::DecorationRole, QVariant(QIcon(iconPath)));
   } else {
-    iconPath = misc::searchEngineLocation()+QDir::separator()+"engines"+QDir::separator()+engine->getName()+".ico";
+    iconPath = fsutils::searchEngineLocation() + "/engines/" + engine->getName() + ".ico";
     if (QFile::exists(iconPath)) { // ICO support
       item->setData(ENGINE_NAME, Qt::DecorationRole, QVariant(QIcon(iconPath)));
     } else {
@@ -325,14 +327,26 @@ void engineSelectDlg::on_installButton_clicked() {
 }
 
 void engineSelectDlg::askForPluginUrl() {
-  bool ok;
-  QString url = QInputDialog::getText(this, tr("New search engine plugin URL"),
+  bool ok(false);
+  QString url = AutoExpandableDialog::getText(this, tr("New search engine plugin URL"),
                                       tr("URL:"), QLineEdit::Normal,
                                       "http://", &ok);
-  if (ok && !url.isEmpty()) {
-    setCursor(QCursor(Qt::WaitCursor));
-    downloader->downloadUrl(url);
+
+  while(true) {
+    if (!ok || url.isEmpty())
+      return;
+    if (!url.endsWith(".py")) {
+      QMessageBox::warning(this, tr("Invalid link"), tr("The link doesn't seem to point to a search engine plugin."));
+      url = AutoExpandableDialog::getText(this, tr("New search engine plugin URL"),
+                                            tr("URL:"), QLineEdit::Normal,
+                                            url, &ok);
+    }
+    else
+      break;
   }
+
+  setCursor(QCursor(Qt::WaitCursor));
+  downloader->downloadUrl(url);
 }
 
 void engineSelectDlg::askForLocalPlugin() {
@@ -342,7 +356,7 @@ void engineSelectDlg::askForLocalPlugin() {
   QString path;
   foreach (path, pathsList) {
     if (path.endsWith(".py", Qt::CaseInsensitive)) {
-      QString plugin_name = path.split(QDir::separator()).last();
+      QString plugin_name = path.split("/").last();
       plugin_name.replace(".py", "", Qt::CaseInsensitive);
       installPlugin(path, plugin_name);
     }
@@ -388,7 +402,7 @@ bool engineSelectDlg::parseVersionsFile(QString versions_file) {
   // Close file
   versions.close();
   // Clean up tmp file
-  QFile::remove(versions_file);
+  fsutils::forceRemove(versions_file);
   if (file_correct && !updated) {
     QMessageBox::information(this, tr("Search plugin update")+" -- "+tr("qBittorrent"), tr("All your plugins are already up to date."));
   }
@@ -396,6 +410,7 @@ bool engineSelectDlg::parseVersionsFile(QString versions_file) {
 }
 
 void engineSelectDlg::processDownloadedFile(QString url, QString filePath) {
+  filePath = fsutils::fromNativePath(filePath);
   setCursor(QCursor(Qt::ArrowCursor));
   qDebug("engineSelectDlg received %s", qPrintable(url));
   if (url.endsWith("favicon.ico", Qt::CaseInsensitive)) {
@@ -410,29 +425,29 @@ void engineSelectDlg::processDownloadedFile(QString url, QString filePath) {
         QFile icon(filePath);
         icon.open(QIODevice::ReadOnly);
         if (ICOHandler::canRead(&icon))
-          iconPath = misc::searchEngineLocation()+QDir::separator()+"engines"+QDir::separator()+id+".ico";
+          iconPath = fsutils::searchEngineLocation() + "/engines/" + id + ".ico";
         else
-          iconPath = misc::searchEngineLocation()+QDir::separator()+"engines"+QDir::separator()+id+".png";
+          iconPath = fsutils::searchEngineLocation() + "/engines/" + id + ".png";
         QFile::copy(filePath, iconPath);
         item->setData(ENGINE_NAME, Qt::DecorationRole, QVariant(QIcon(iconPath)));
       }
     }
     // Delete tmp file
-    QFile::remove(filePath);
+    fsutils::forceRemove(filePath);
     return;
   }
   if (url.endsWith("versions.txt")) {
     if (!parseVersionsFile(filePath)) {
       QMessageBox::warning(this, tr("Search plugin update")+" -- "+tr("qBittorrent"), tr("Sorry, update server is temporarily unavailable."));
     }
-    QFile::remove(filePath);
+    fsutils::forceRemove(filePath);
     return;
   }
   if (url.endsWith(".py", Qt::CaseInsensitive)) {
-    QString plugin_name = misc::fileName(url);
+    QString plugin_name = fsutils::fileName(url);
     plugin_name.chop(3); // Remove extension
     installPlugin(filePath, plugin_name);
-    QFile::remove(filePath);
+    fsutils::forceRemove(filePath);
     return;
   }
 }

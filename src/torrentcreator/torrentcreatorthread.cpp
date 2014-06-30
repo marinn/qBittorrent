@@ -38,53 +38,36 @@
 #include <libtorrent/file_pool.hpp>
 #include <libtorrent/create_torrent.hpp>
 #include <QFile>
+#include <QDir>
 
 #include "torrentcreatorthread.h"
-#include "misc.h"
+#include "fs_utils.h"
 
-#if LIBTORRENT_VERSION_MINOR < 16
-#include <boost/filesystem/operations.hpp>
-#include <boost/filesystem/path.hpp>
-#include <boost/filesystem/fstream.hpp>
-#endif
 #include <boost/bind.hpp>
+#include <iostream>
+#include <fstream>
 
 using namespace libtorrent;
-#if LIBTORRENT_VERSION_MINOR < 16
-using namespace boost::filesystem;
-#endif
 
 // do not include files and folders whose
 // name starts with a .
-#if LIBTORRENT_VERSION_MINOR >= 16
 bool file_filter(std::string const& f)
 {
         if (filename(f)[0] == '.') return false;
         return true;
 }
-#else
-bool file_filter(boost::filesystem::path const& filename)
-{
-  if (filename.leaf()[0] == '.') return false;
-  std::cerr << filename << std::endl;
-  return true;
-}
-#endif
 
 void TorrentCreatorThread::create(QString _input_path, QString _save_path, QStringList _trackers, QStringList _url_seeds, QString _comment, bool _is_private, int _piece_size)
 {
-  input_path = _input_path;
-  save_path = _save_path;
+  input_path = fsutils::fromNativePath(_input_path);
+  save_path = fsutils::fromNativePath(_save_path);
   if (QFile(save_path).exists())
-    QFile::remove(save_path);
+    fsutils::forceRemove(save_path);
   trackers = _trackers;
   url_seeds = _url_seeds;
   comment = _comment;
   is_private = _is_private;
   piece_size = _piece_size;
-#if LIBTORRENT_VERSION_MINOR < 16
-  path::default_name_check(no_check);
-#endif
   abort = false;
   start();
 }
@@ -103,7 +86,7 @@ void TorrentCreatorThread::run() {
   try {
     file_storage fs;
     // Adding files to the torrent
-    libtorrent::add_files(fs, input_path.toUtf8().constData(), file_filter);
+    libtorrent::add_files(fs, fsutils::toNativePath(input_path).toUtf8().constData(), file_filter);
     if (abort) return;
     create_torrent t(fs, piece_size);
 
@@ -111,13 +94,23 @@ void TorrentCreatorThread::run() {
     foreach (const QString &seed, url_seeds) {
       t.add_url_seed(seed.trimmed().toStdString());
     }
+    int tier = 0;
+    bool newline = false;
     foreach (const QString &tracker, trackers) {
-      t.add_tracker(tracker.trimmed().toStdString());
+      if (tracker.isEmpty()) {
+        if (newline)
+          continue;
+        ++tier;
+        newline = true;
+        continue;
+      }
+      t.add_tracker(tracker.trimmed().toStdString(), tier);
+      newline = false;
     }
     if (abort) return;
     // calculate the hash for all pieces
-    const QString parent_path = misc::branchPath(input_path);
-    set_piece_hashes(t, parent_path.toUtf8().constData(), boost::bind<void>(&sendProgressUpdateSignal, _1, t.num_pieces(), this));
+    const QString parent_path = fsutils::branchPath(input_path) + "/";
+    set_piece_hashes(t, fsutils::toNativePath(parent_path).toUtf8().constData(), boost::bind<void>(&sendProgressUpdateSignal, _1, t.num_pieces(), this));
     // Set qBittorrent as creator and add user comment to
     // torrent_info structure
     t.set_creator(creator_str.toUtf8().constData());
@@ -127,17 +120,21 @@ void TorrentCreatorThread::run() {
     if (abort) return;
     // create the torrent and print it to out
     qDebug("Saving to %s", qPrintable(save_path));
-    std::vector<char> torrent;
-    bencode(back_inserter(torrent), t.generate());
-    QFile outfile(save_path);
-    if (!torrent.empty() && outfile.open(QIODevice::WriteOnly)) {
-      outfile.write(&torrent[0], torrent.size());
-      outfile.close();
-      emit updateProgress(100);
-      emit creationSuccess(save_path, parent_path);
-    } else {
+#ifdef _MSC_VER
+    wchar_t *wsave_path = new wchar_t[save_path.length()+1];
+    int len = fsutils::toNativePath(save_path).toWCharArray(wsave_path);
+    wsave_path[len] = '\0';
+    std::ofstream outfile(wsave_path, std::ios_base::out|std::ios_base::binary);
+    delete[] wsave_path;
+#else
+    std::ofstream outfile(fsutils::toNativePath(save_path).toLocal8Bit().constData(), std::ios_base::out|std::ios_base::binary);
+#endif
+    if (outfile.fail())
       throw std::exception();
-    }
+    bencode(std::ostream_iterator<char>(outfile), t.generate());
+    outfile.close();
+    emit updateProgress(100);
+    emit creationSuccess(save_path, parent_path);
   } catch (std::exception& e) {
     emit creationFailure(QString::fromLocal8Bit(e.what()));
   }

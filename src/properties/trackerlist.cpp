@@ -34,6 +34,8 @@
 #include <QHash>
 #include <QAction>
 #include <QColor>
+#include <QDebug>
+#include <QUrl>
 #include <libtorrent/version.hpp>
 #include <libtorrent/peer_info.hpp>
 #include "trackerlist.h"
@@ -43,6 +45,7 @@
 #include "qbtsession.h"
 #include "qinisettings.h"
 #include "misc.h"
+#include "autoexpandabledialog.h"
 
 using namespace libtorrent;
 
@@ -63,27 +66,32 @@ TrackerList::TrackerList(PropertiesWidget *properties): QTreeWidget(), propertie
   header << tr("Peers");
   header << tr("Message");
   setHeaderItem(new QTreeWidgetItem(header));
-  dht_item = new QTreeWidgetItem(QStringList() << "" << "** "+tr("[DHT]")+" **");
+  dht_item = new QTreeWidgetItem(QStringList() << "" << "** [DHT] **");
   insertTopLevelItem(0, dht_item);
   setRowColor(0, QColor("grey"));
-  pex_item = new QTreeWidgetItem(QStringList() << "" << "** "+tr("[PeX]")+" **");
+  pex_item = new QTreeWidgetItem(QStringList() << "" << "** [PeX] **");
   insertTopLevelItem(1, pex_item);
   setRowColor(1, QColor("grey"));
-  lsd_item = new QTreeWidgetItem(QStringList() << "" << "** "+tr("[LSD]")+" **");
+  lsd_item = new QTreeWidgetItem(QStringList() << "" << "** [LSD] **");
   insertTopLevelItem(2, lsd_item);
   setRowColor(2, QColor("grey"));
+  editHotkey = new QShortcut(QKeySequence("F2"), this, SLOT(editSelectedTracker()), 0, Qt::WidgetShortcut);
+  connect(this, SIGNAL(doubleClicked(QModelIndex)), SLOT(editSelectedTracker()));
+  deleteHotkey = new QShortcut(QKeySequence(QKeySequence::Delete), this, SLOT(deleteSelectedTrackers()), 0, Qt::WidgetShortcut);
 
   loadSettings();
 }
 
 TrackerList::~TrackerList() {
+  delete editHotkey;
+  delete deleteHotkey;
   saveSettings();
 }
 
 QList<QTreeWidgetItem*> TrackerList::getSelectedTrackerItems() const {
-  QList<QTreeWidgetItem*> selected_items = selectedItems();
+  const QList<QTreeWidgetItem*> selected_items = selectedItems();
   QList<QTreeWidgetItem*> selected_trackers;
-  foreach (QTreeWidgetItem *item, selectedItems()) {
+  foreach (QTreeWidgetItem *item, selected_items) {
     if (indexOfTopLevelItem(item) >= NB_STICKY_ITEM) { // Ignore STICKY ITEMS
       selected_trackers << item;
     }
@@ -132,7 +140,9 @@ void TrackerList::moveSelectionUp() {
   }
   h.replace_trackers(trackers);
   // Reannounce
-  h.force_reannounce();
+  if (!h.is_paused())
+    h.force_reannounce();
+  loadTrackers();
 }
 
 void TrackerList::moveSelectionDown() {
@@ -168,7 +178,9 @@ void TrackerList::moveSelectionDown() {
   }
   h.replace_trackers(trackers);
   // Reannounce
-  h.force_reannounce();
+  if (!h.is_paused())
+    h.force_reannounce();
+  loadTrackers();
 }
 
 void TrackerList::clear() {
@@ -186,13 +198,42 @@ void TrackerList::clear() {
 }
 
 void TrackerList::loadStickyItems(const QTorrentHandle &h) {
+  QString working = tr("Working");
+  QString disabled = tr("Disabled");
+
+  // load DHT information
+  if (QBtSession::instance()->isDHTEnabled() && !h.priv())
+    dht_item->setText(COL_STATUS, working);
+  else
+    dht_item->setText(COL_STATUS, disabled);
+
+  // Load PeX Information
+  if (QBtSession::instance()->isPexEnabled() && !h.priv())
+    pex_item->setText(COL_STATUS, working);
+  else
+    pex_item->setText(COL_STATUS, disabled);
+
+  // Load LSD Information
+  if (QBtSession::instance()->isLSDEnabled() && !h.priv())
+    lsd_item->setText(COL_STATUS, working);
+  else
+    lsd_item->setText(COL_STATUS, disabled);
+
+  if (h.priv()) {
+    QString privateMsg = tr("This torrent is private");
+    dht_item->setText(COL_MSG, privateMsg);
+    pex_item->setText(COL_MSG, privateMsg);
+    lsd_item->setText(COL_MSG, privateMsg);
+  }
+
   // XXX: libtorrent should provide this info...
   // Count peers from DHT, LSD, PeX
-  uint nb_dht=0, nb_lsd=0, nb_pex=0;
+  uint nb_dht = 0, nb_lsd = 0, nb_pex = 0;
   std::vector<peer_info> peers;
   h.get_peer_info(peers);
-  std::vector<peer_info>::iterator it;
-  for (it=peers.begin(); it!=peers.end(); it++) {
+  std::vector<peer_info>::iterator it = peers.begin();
+  std::vector<peer_info>::iterator end = peers.end();
+  for ( ; it != end; ++it) {
     if (it->source & peer_info::dht)
       ++nb_dht;
     if (it->source & peer_info::lsd)
@@ -200,27 +241,8 @@ void TrackerList::loadStickyItems(const QTorrentHandle &h) {
     if (it->source & peer_info::pex)
       ++nb_pex;
   }
-  // load DHT information
-  if (QBtSession::instance()->isDHTEnabled() && h.has_metadata() && !h.priv()) {
-    dht_item->setText(COL_STATUS, tr("Working"));
-  } else {
-    dht_item->setText(COL_STATUS, tr("Disabled"));
-  }
   dht_item->setText(COL_PEERS, QString::number(nb_dht));
-  if (h.has_metadata() && h.priv()) {
-    dht_item->setText(COL_MSG, tr("This torrent is private"));
-  }
-  // Load PeX Information
-  if (QBtSession::instance()->isPexEnabled())
-    pex_item->setText(COL_STATUS, tr("Working"));
-  else
-    pex_item->setText(COL_STATUS, tr("Disabled"));
   pex_item->setText(COL_PEERS, QString::number(nb_pex));
-  // Load LSD Information
-  if (QBtSession::instance()->isLSDEnabled())
-    lsd_item->setText(COL_STATUS, tr("Working"));
-  else
-    lsd_item->setText(COL_STATUS, tr("Disabled"));
   lsd_item->setText(COL_PEERS, QString::number(nb_lsd));
 }
 
@@ -233,18 +255,20 @@ void TrackerList::loadTrackers() {
   QHash<QString, TrackerInfos> trackers_data = QBtSession::instance()->getTrackersInfo(h.hash());
   QStringList old_trackers_urls = tracker_items.keys();
   const std::vector<announce_entry> trackers = h.trackers();
-  for (std::vector<announce_entry>::const_iterator it = trackers.begin(); it != trackers.end(); it++) {
+  std::vector<announce_entry>::const_iterator it = trackers.begin();
+  std::vector<announce_entry>::const_iterator end = trackers.end();
+  for ( ; it != end; ++it) {
     QString tracker_url = misc::toQString(it->url);
     QTreeWidgetItem *item = tracker_items.value(tracker_url, 0);
     if (!item) {
       item = new QTreeWidgetItem();
-      item->setText(COL_TIER, QString::number(it->tier));
       item->setText(COL_URL, tracker_url);
       addTopLevelItem(item);
       tracker_items[tracker_url] = item;
     } else {
       old_trackers_urls.removeOne(tracker_url);
     }
+    item->setText(COL_TIER, QString::number(it->tier));
     TrackerInfos data = trackers_data.value(tracker_url, TrackerInfos(tracker_url));
     QString error_message = data.last_message.trimmed();
     if (it->verified) {
@@ -278,18 +302,33 @@ void TrackerList::askForTrackers() {
   if (!h.is_valid()) return;
   QStringList trackers = TrackersAdditionDlg::askForTrackers(h);
   if (!trackers.empty()) {
-    foreach (const QString& tracker, trackers) {
+    for (int i=0; i<trackers.count(); i++) {
+      const QString& tracker = trackers[i];
       if (tracker.trimmed().isEmpty()) continue;
       announce_entry url(tracker.toStdString());
-      url.tier = 0;
+      url.tier = (topLevelItemCount() - NB_STICKY_ITEM) + i;
       h.add_tracker(url);
     }
     // Reannounce to new trackers
-    h.force_reannounce();
+    if (!h.is_paused())
+      h.force_reannounce();
     // Reload tracker list
     loadTrackers();
   }
 }
+
+void TrackerList::copyTrackerUrl() {
+    QList<QTreeWidgetItem *> selected_items = getSelectedTrackerItems();
+    if (selected_items.isEmpty()) return;
+    QStringList urls_to_copy;
+    foreach (QTreeWidgetItem *item, selected_items) {
+      QString tracker_url = item->data(COL_URL, Qt::DisplayRole).toString();
+      qDebug() << QString("Copy: ") + tracker_url;
+      urls_to_copy << tracker_url;
+    }
+    QApplication::clipboard()->setText(urls_to_copy.join("\n"));
+}
+
 
 void TrackerList::deleteSelectedTrackers() {
   QTorrentHandle h = properties->getCurrentTorrent();
@@ -309,17 +348,101 @@ void TrackerList::deleteSelectedTrackers() {
   // Iterate of trackers and remove selected ones
   std::vector<announce_entry> remaining_trackers;
   std::vector<announce_entry> trackers = h.trackers();
-  std::vector<announce_entry>::iterator it;
-  for (it = trackers.begin(); it != trackers.end(); it++) {
+
+  std::vector<announce_entry>::iterator it = trackers.begin();
+  std::vector<announce_entry>::iterator itend = trackers.end();
+  for ( ; it != itend; ++it) {
     if (!urls_to_remove.contains(misc::toQString((*it).url))) {
       remaining_trackers.push_back(*it);
     }
   }
   h.replace_trackers(remaining_trackers);
-  h.force_reannounce();
+  if (!h.is_paused())
+    h.force_reannounce();
   // Reload Trackers
   loadTrackers();
 }
+
+void TrackerList::editSelectedTracker() {
+  try {
+    QTorrentHandle h = properties->getCurrentTorrent();
+
+    QList<QTreeWidgetItem *> selected_items = getSelectedTrackerItems();
+    if (selected_items.isEmpty())
+      return;
+    // During multi-select only process item selected last
+    QUrl tracker_url = selected_items.last()->text(COL_URL);
+
+    bool ok;
+    QUrl new_tracker_url = AutoExpandableDialog::getText(this, tr("Tracker editing"), tr("Tracker URL:"),
+                                                         QLineEdit::Normal, tracker_url.toString(), &ok).trimmed();
+    if (!ok)
+      return;
+
+    if (!new_tracker_url.isValid()) {
+      QMessageBox::warning(this, tr("Tracker editing failed"), tr("The tracker URL entered is invalid."));
+      return;
+    }
+    if (new_tracker_url == tracker_url)
+      return;
+
+    std::vector<announce_entry> trackers = h.trackers();
+    std::vector<announce_entry>::iterator it = trackers.begin();
+    std::vector<announce_entry>::iterator itend = trackers.end();
+    bool match = false;
+
+    for ( ; it != itend; ++it) {
+      if (new_tracker_url == QUrl(misc::toQString(it->url))) {
+        QMessageBox::warning(this, tr("Tracker editing failed"), tr("The tracker URL already exists."));
+        return;
+      }
+
+      if (tracker_url == QUrl(misc::toQString(it->url)) && !match) {
+        announce_entry new_entry(new_tracker_url.toString().toStdString());
+        new_entry.tier = it->tier;
+        match = true;
+        *it = new_entry;
+      }
+    }
+
+    h.replace_trackers(trackers);
+    if (!h.is_paused()) {
+      h.force_reannounce();
+      h.force_dht_announce();
+    }
+  } catch(invalid_handle&) {
+    return;
+  }
+
+  loadTrackers();
+}
+
+#if LIBTORRENT_VERSION_NUM >= 10000
+void TrackerList::reannounceSelected() {
+  try {
+    QTorrentHandle h = properties->getCurrentTorrent();
+
+    QList<QTreeWidgetItem *> selected_items = getSelectedTrackerItems();
+    if (selected_items.isEmpty())
+      return;
+
+    std::vector<announce_entry> trackers = h.trackers();
+    for (int i = 0; i < trackers.size(); ++i) {
+      foreach (QTreeWidgetItem* w, selected_items) {
+        if (w->text(COL_URL) == misc::toQString(trackers[i].url)) {
+          h.force_reannounce(0, i);
+          break;
+        }
+      }
+    }
+  } catch(invalid_handle&) {
+    return;
+  }
+
+  loadTrackers();
+}
+
+#endif
 
 void TrackerList::showTrackerListMenu(QPoint) {
   QTorrentHandle h = properties->getCurrentTorrent();
@@ -328,30 +451,57 @@ void TrackerList::showTrackerListMenu(QPoint) {
   QMenu menu;
   // Add actions
   QAction *addAct = menu.addAction(IconProvider::instance()->getIcon("list-add"), tr("Add a new tracker..."));
+  QAction *copyAct = 0;
   QAction *delAct = 0;
+  QAction *editAct = 0;
   if (!getSelectedTrackerItems().isEmpty()) {
     delAct = menu.addAction(IconProvider::instance()->getIcon("list-remove"), tr("Remove tracker"));
+    copyAct = menu.addAction(IconProvider::instance()->getIcon("edit-copy"), tr("Copy tracker url"));
+    editAct = menu.addAction(IconProvider::instance()->getIcon("edit-rename"),tr("Edit selected tracker URL"));
   }
-  menu.addSeparator();
-  QAction *reannounceAct = menu.addAction(IconProvider::instance()->getIcon("view-refresh"), tr("Force reannounce"));
+#if LIBTORRENT_VERSION_NUM >= 10000
+  QAction *reannounceSelAct = NULL;
+#endif
+  QAction *reannounceAct = NULL;
+  if (!h.is_paused()) {
+#if LIBTORRENT_VERSION_NUM >= 10000
+    reannounceSelAct = menu.addAction(IconProvider::instance()->getIcon("view-refresh"), tr("Force reannounce to selected trackers"));
+#endif
+    menu.addSeparator();
+    reannounceAct = menu.addAction(IconProvider::instance()->getIcon("view-refresh"), tr("Force reannounce to all trackers"));
+  }
   QAction *act = menu.exec(QCursor::pos());
   if (act == 0) return;
   if (act == addAct) {
     askForTrackers();
     return;
   }
+  if (act == copyAct) {
+    copyTrackerUrl();
+    return;
+  }
   if (act == delAct) {
     deleteSelectedTrackers();
     return;
   }
+#if LIBTORRENT_VERSION_NUM >= 10000
+  if (act == reannounceSelAct) {
+    reannounceSelected();
+    return;
+  }
+#endif
   if (act == reannounceAct) {
     properties->getCurrentTorrent().force_reannounce();
+    return;
+  }
+  if (act == editAct) {
+    editSelectedTracker();
     return;
   }
 }
 
 void TrackerList::loadSettings() {
-  QIniSettings settings(QString::fromUtf8("qBittorrent"), QString::fromUtf8("qBittorrent"));
+  QIniSettings settings;
   if (!header()->restoreState(settings.value("TorrentProperties/Trackers/TrackerListState").toByteArray())) {
     setColumnWidth(0, 30);
     setColumnWidth(1, 300);
@@ -359,6 +509,6 @@ void TrackerList::loadSettings() {
 }
 
 void TrackerList::saveSettings() const {
-  QIniSettings settings(QString::fromUtf8("qBittorrent"), QString::fromUtf8("qBittorrent"));
+  QIniSettings settings;
   settings.setValue("TorrentProperties/Trackers/TrackerListState", header()->saveState());
 }

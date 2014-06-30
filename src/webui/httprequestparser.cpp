@@ -31,6 +31,9 @@
 
 #include "httprequestparser.h"
 #include <QUrl>
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 0, 0))
+#include <QUrlQuery>
+#endif
 #include <QDebug>
 
 HttpRequestParser::HttpRequestParser(): m_error(false)
@@ -45,11 +48,11 @@ bool HttpRequestParser::isError() const {
   return m_error;
 }
 
-QString HttpRequestParser::url() const {
+const QString& HttpRequestParser::url() const {
   return m_path;
 }
 
-QByteArray HttpRequestParser::message() const {
+const QByteArray& HttpRequestParser::message() const {
   return m_data;
 }
 
@@ -61,36 +64,60 @@ QString HttpRequestParser::post(const QString& key) const {
   return m_postMap.value(key);
 }
 
-const QByteArray& HttpRequestParser::torrent() const {
-  return m_torrentContent;
+const QList<QByteArray>& HttpRequestParser::torrents() const {
+  return m_torrents;
 }
 
 void HttpRequestParser::writeHeader(const QByteArray& ba) {
+  m_error = false;
   // Parse header
-  m_header = QHttpRequestHeader(ba);
-  QUrl url = QUrl::fromEncoded(m_header.path().toAscii());
+  m_header = HttpRequestHeader(ba);
+  QUrl url = QUrl::fromEncoded(m_header.path().toLatin1());
   m_path = url.path();
 
   // Parse GET parameters
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 0, 0))
+  QUrlQuery query(url);
+  QListIterator<QPair<QString, QString> > i(query.queryItems());
+#else
   QListIterator<QPair<QString, QString> > i(url.queryItems());
+#endif
   while (i.hasNext()) {
     QPair<QString, QString> pair = i.next();
     m_getMap[pair.first] = pair.second;
   }
 }
 
+static QList<QByteArray> splitRawData(QByteArray rawData, const QByteArray& sep)
+{
+  QList<QByteArray> ret;
+  const int sepLength = sep.size();
+  int index = 0;
+  while ((index = rawData.indexOf(sep)) >= 0) {
+    ret << rawData.left(index);
+    rawData = rawData.mid(index + sepLength);
+  }
+  return ret;
+}
+
 void HttpRequestParser::writeMessage(const QByteArray& ba) {
   // Parse message content
   Q_ASSERT (m_header.hasContentLength());
-
+  m_error = false;
   m_data = ba;
   qDebug() << Q_FUNC_INFO << "m_data.size(): " << m_data.size();
 
   // Parse POST data
   if (m_header.contentType() == "application/x-www-form-urlencoded") {
     QUrl url;
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 0, 0))
+    QString tmp(m_data);
+    QUrlQuery query(tmp);
+    QListIterator<QPair<QString, QString> > i(query.queryItems(QUrl::FullyDecoded));
+#else
     url.setEncodedQuery(m_data);
     QListIterator<QPair<QString, QString> > i(url.queryItems());
+#endif
     while (i.hasNext())	{
       QPair<QString, QString> pair = i.next();
       m_postMap[pair.first] = pair.second;
@@ -119,21 +146,56 @@ Submit Query
 **/
   if (m_header.contentType().startsWith("multipart/form-data")) {
     qDebug() << Q_FUNC_INFO << "header is: " << m_header.toString();
-
-    int filename_index = m_data.indexOf("filename=");
-    if (filename_index >= 0) {
-      QByteArray boundary = m_data.left(m_data.indexOf("\r\n"));
-      qDebug() << "Boundary is " << boundary << "\n\n";
-      qDebug() << "Before binary data: " << m_data.left(m_data.indexOf("\r\n\r\n", filename_index+9)) << "\n\n";
-      m_torrentContent = m_data.mid(m_data.indexOf("\r\n\r\n", filename_index+9) + 4);
-      int binaryend_index = m_torrentContent.indexOf("\r\n"+boundary);
-      if (binaryend_index >= 0) {
-        qDebug() << "found end boundary :)";
-        m_torrentContent = m_torrentContent.left(binaryend_index);
+    static QRegExp boundaryRegexQuoted("boundary=\"([ \\w'()+,-\\./:=\\?]+)\"");
+    static QRegExp boundaryRegexNotQuoted("boundary=([\\w'()+,-\\./:=\\?]+)");
+    QByteArray boundary;
+    if (boundaryRegexQuoted.indexIn(m_header.toString()) < 0) {
+      if (boundaryRegexNotQuoted.indexIn(m_header.toString()) < 0) {
+        qWarning() << "Could not find boundary in multipart/form-data header!";
+        m_error = true;
+        return;
+      } else {
+        boundary = "--" + boundaryRegexNotQuoted.cap(1).toLatin1();
       }
-      qDebug() << Q_FUNC_INFO << "m_torrentContent.size(): " << m_torrentContent.size()<< "\n\n";
     } else {
-      m_error = true;
+      boundary = "--" + boundaryRegexQuoted.cap(1).toLatin1();
+    }
+    qDebug() << "Boundary is " << boundary;
+    QList<QByteArray> parts = splitRawData(m_data, boundary);
+    qDebug() << parts.size() << "parts in data";
+    foreach (const QByteArray& part, parts) {
+      const int filenameIndex = part.indexOf("filename=");
+      if (filenameIndex < 0)
+        continue;
+      qDebug() << "Found a torrent";
+      m_torrents << part.mid(part.indexOf("\r\n\r\n", filenameIndex + 9) + 4);
     }
   }
+}
+
+bool HttpRequestParser::acceptsEncoding() {
+  QString encoding = m_header.value("Accept-Encoding");
+
+  int pos = encoding.indexOf("gzip", 0, Qt::CaseInsensitive);
+  if (pos == -1)
+    return false;
+
+  // Let's see if there's a qvalue of 0.0 following
+  if (encoding[pos+4] != ';') //there isn't, so it accepts gzip anyway
+    return true;
+
+  //So let's find = and the next comma
+  pos = encoding.indexOf("=", pos+4, Qt::CaseInsensitive);
+  int comma_pos = encoding.indexOf(",", pos, Qt::CaseInsensitive);
+
+  QString value;
+  if (comma_pos == -1)
+    value = encoding.mid(pos+1, comma_pos);
+  else
+    value = encoding.mid(pos+1, comma_pos-(pos+1));
+
+  if (value.toDouble() == 0.0)
+    return false;
+  else
+    return true;
 }

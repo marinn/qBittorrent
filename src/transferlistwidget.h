@@ -31,9 +31,11 @@
 #ifndef TRANSFERLISTWIDGET_H
 #define TRANSFERLISTWIDGET_H
 
+#include <QShortcut>
 #include <QTreeView>
 #include <libtorrent/version.hpp>
 #include "qtorrenthandle.h"
+#include "transferlistsortmodel.h"
 
 class QBtSession;
 class TransferListDelegate;
@@ -78,7 +80,7 @@ public slots:
   void previewSelectedTorrents();
   void hidePriorityColumn(bool hide);
   void displayDLHoSMenu(const QPoint&);
-  void applyNameFilter(QString name);
+  void applyNameFilter(const QString& name);
   void applyStatusFilter(int f);
   void applyLabelFilter(QString label);
   void previewFile(QString filePath);
@@ -104,17 +106,22 @@ protected slots:
   void toggleSelectedFirstLastPiecePrio() const;
   void askNewLabelForSelection();
 
+private:
+  bool openUrl(const QString& _path) const;
+
 signals:
   void currentTorrentChanged(const QTorrentHandle &h);
 
 private:
   TransferListDelegate *listDelegate;
   TorrentModel *listModel;
-  QSortFilterProxyModel *nameFilterModel;
+  TransferListSortModel *nameFilterModel;
   QSortFilterProxyModel *statusFilterModel;
   QSortFilterProxyModel *labelFilterModel;
   QBtSession* BTSession;
   MainWindow *main_window;
+  QShortcut *editHotkey;
+  QShortcut *deleteHotkey;
 };
 
 #endif // TRANSFERLISTWIDGET_H

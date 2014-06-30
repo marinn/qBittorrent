@@ -13,11 +13,11 @@
 #include "preferences.h"
 
 enum AdvSettingsCols {PROPERTY, VALUE};
-enum AdvSettingsRows {DISK_CACHE, OUTGOING_PORT_MIN, OUTGOING_PORT_MAX, IGNORE_LIMIT_LAN, RECHECK_COMPLETED, LIST_REFRESH, RESOLVE_COUNTRIES, RESOLVE_HOSTS, MAX_HALF_OPEN, SUPER_SEEDING, NETWORK_IFACE, NETWORK_ADDRESS, PROGRAM_NOTIFICATIONS, TRACKER_STATUS, TRACKER_PORT,
-                    #if defined(Q_WS_WIN) || defined(Q_WS_MAC)
+enum AdvSettingsRows {DISK_CACHE, DISK_CACHE_TTL, OUTGOING_PORT_MIN, OUTGOING_PORT_MAX, IGNORE_LIMIT_LAN, RECHECK_COMPLETED, LIST_REFRESH, RESOLVE_COUNTRIES, RESOLVE_HOSTS, MAX_HALF_OPEN, SUPER_SEEDING, NETWORK_IFACE, NETWORK_ADDRESS, PROGRAM_NOTIFICATIONS, TRACKER_STATUS, TRACKER_PORT,
+                    #if defined(Q_OS_WIN) || defined(Q_OS_MAC)
                       UPDATE_CHECK,
                     #endif
-                    #if defined(Q_WS_X11)
+                    #if (defined(Q_OS_UNIX) && !defined(Q_OS_MAC))
                       USE_ICON_THEME,
                     #endif
                       CONFIRM_DELETE_TORRENT, TRACKER_EXCHANGE,
@@ -33,10 +33,11 @@ private:
   cb_super_seeding, cb_program_notifications, cb_tracker_status, cb_confirm_torrent_deletion,
   cb_enable_tracker_ext;
   QComboBox combo_iface;
-#if defined(Q_WS_WIN) || defined(Q_WS_MAC)
+  QSpinBox spin_cache_ttl;
+#if defined(Q_OS_WIN) || defined(Q_OS_MAC)
   QCheckBox cb_update_check;
 #endif
-#if defined(Q_WS_X11)
+#if (defined(Q_OS_UNIX) && !defined(Q_OS_MAC))
   QCheckBox cb_use_icon_theme;
 #endif
   QCheckBox cb_announce_all_trackers;
@@ -55,6 +56,8 @@ public:
     horizontalHeader()->setStretchLastSection(true);
     verticalHeader()->setVisible(false);
     setRowCount(ROW_COUNT);
+    // Signals
+    connect(&spin_cache, SIGNAL(valueChanged(int)), SLOT(updateCacheSpinSuffix(int)));
     // Load settings
     loadAdvancedSettings();
   }
@@ -67,6 +70,7 @@ public slots:
     Preferences pref;
     // Disk write cache
     pref.setDiskCacheSize(spin_cache.value());
+    pref.setDiskCacheTTL(spin_cache_ttl.value());
     // Outgoing ports
     pref.setOutgoingPortsMin(outgoing_ports_min.value());
     pref.setOutgoingPortsMax(outgoing_ports_max.value());
@@ -87,8 +91,10 @@ public slots:
     if (combo_iface.currentIndex() == 0) {
       // All interfaces (default)
       pref.setNetworkInterface(QString::null);
+      pref.setNetworkInterfaceName(QString::null);
     } else {
-      pref.setNetworkInterface(combo_iface.currentText());
+      pref.setNetworkInterface(combo_iface.itemData(combo_iface.currentIndex()).toString());
+      pref.setNetworkInterfaceName(combo_iface.currentText());
     }
     // Network address
     QHostAddress addr(txt_network_address.text().trimmed());
@@ -101,11 +107,11 @@ public slots:
     // Tracker
     pref.setTrackerEnabled(cb_tracker_status.isChecked());
     pref.setTrackerPort(spin_tracker_port.value());
-#if defined(Q_WS_WIN) || defined(Q_WS_MAC)
+#if defined(Q_OS_WIN) || defined(Q_OS_MAC)
     pref.setUpdateCheckEnabled(cb_update_check.isChecked());
 #endif
     // Icon theme
-#if defined(Q_WS_X11)
+#if (defined(Q_OS_UNIX) && !defined(Q_OS_MAC))
     pref.useSystemIconTheme(cb_use_icon_theme.isChecked());
 #endif
     pref.setConfirmTorrentDeletion(cb_confirm_torrent_deletion.isChecked());
@@ -151,14 +157,29 @@ private:
   }
 
 private slots:
-  void loadAdvancedSettings() {
+  void updateCacheSpinSuffix(int value)
+  {
+    if (value <= 0)
+      spin_cache.setSuffix(tr(" (auto)"));
+    else
+      spin_cache.setSuffix(tr(" MiB"));
+  }
+
+  void loadAdvancedSettings()
+  {
     const Preferences pref;
     // Disk write cache
-    spin_cache.setMinimum(1);
-    spin_cache.setMaximum(200);
+    spin_cache.setMinimum(0);
+    spin_cache.setMaximum(2048);
     spin_cache.setValue(pref.diskCacheSize());
-    spin_cache.setSuffix(tr(" MiB"));
+    updateCacheSpinSuffix(spin_cache.value());
     setRow(DISK_CACHE, tr("Disk write cache size"), &spin_cache);
+    // Disk cache expiry
+    spin_cache_ttl.setMinimum(15);
+    spin_cache_ttl.setMaximum(600);
+    spin_cache_ttl.setValue(pref.diskCacheTTL());
+    spin_cache_ttl.setSuffix(tr(" s", " seconds"));
+    setRow(DISK_CACHE_TTL, tr("Disk cache expiry interval"), &spin_cache_ttl);
     // Outgoing port Min
     outgoing_ports_min.setMinimum(0);
     outgoing_ports_min.setMaximum(65535);
@@ -198,13 +219,21 @@ private slots:
     // Network interface
     combo_iface.addItem(tr("Any interface", "i.e. Any network interface"));
     const QString current_iface = pref.getNetworkInterface();
+    bool interface_exists = current_iface.isEmpty();
     int i = 1;
     foreach (const QNetworkInterface& iface, QNetworkInterface::allInterfaces()) {
       if (iface.flags() & QNetworkInterface::IsLoopBack) continue;
-      combo_iface.addItem(iface.name());
-      if (!current_iface.isEmpty() && iface.name() == current_iface)
+      combo_iface.addItem(iface.humanReadableName(),iface.name());
+      if (!current_iface.isEmpty() && iface.name() == current_iface) {
         combo_iface.setCurrentIndex(i);
+        interface_exists = true;
+      }
       ++i;
+    }
+    // Saved interface does not exist, show it anyway
+    if (!interface_exists) {
+      combo_iface.addItem(pref.getNetworkInterfaceName(),current_iface);
+      combo_iface.setCurrentIndex(i);
     }
     setRow(NETWORK_IFACE, tr("Network Interface (requires restart)"), &combo_iface);
     // Network address
@@ -221,11 +250,11 @@ private slots:
     spin_tracker_port.setMaximum(65535);
     spin_tracker_port.setValue(pref.getTrackerPort());
     setRow(TRACKER_PORT, tr("Embedded tracker port"), &spin_tracker_port);
-#if defined(Q_WS_WIN) || defined(Q_WS_MAC)
+#if defined(Q_OS_WIN) || defined(Q_OS_MAC)
     cb_update_check.setChecked(pref.isUpdateCheckEnabled());
     setRow(UPDATE_CHECK, tr("Check for software updates"), &cb_update_check);
 #endif
-#if defined(Q_WS_X11)
+#if (defined(Q_OS_UNIX) && !defined(Q_OS_MAC))
     cb_use_icon_theme.setChecked(pref.useSystemIconTheme());
     setRow(USE_ICON_THEME, tr("Use system icon theme"), &cb_use_icon_theme);
 #endif

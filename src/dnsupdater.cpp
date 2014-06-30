@@ -31,6 +31,9 @@
 #include <QNetworkAccessManager>
 #include <QDebug>
 #include <QRegExp>
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 0, 0))
+#include <QUrlQuery>
+#endif
 #include "dnsupdater.h"
 #include "qbtsession.h"
 
@@ -40,7 +43,7 @@ DNSUpdater::DNSUpdater(QObject *parent) :
   updateCredentials();
 
   // Load saved settings from previous session
-  QIniSettings settings("qBittorrent", "qBittorrent");
+  QIniSettings settings;
   m_lastIPCheckTime = settings.value("DNSUpdater/lastUpdateTime").toDateTime();
   m_lastIP = QHostAddress(settings.value("DNSUpdater/lastIP").toString());
 
@@ -58,7 +61,7 @@ DNSUpdater::DNSUpdater(QObject *parent) :
 
 DNSUpdater::~DNSUpdater() {
   // Save lastupdate time and last ip
-  QIniSettings settings("qBittorrent", "qBittorrent");
+  QIniSettings settings;
   settings.setValue("DNSUpdater/lastUpdateTime", m_lastIPCheckTime);
   settings.setValue("DNSUpdater/lastIP", m_lastIP.toString());
 }
@@ -148,9 +151,18 @@ QUrl DNSUpdater::getUpdateUrl() const
     Q_ASSERT(0);
   }
   url.setPath("/nic/update");
+
+#if (QT_VERSION < QT_VERSION_CHECK(5, 0, 0))
   url.addQueryItem("hostname", m_domain);
   url.addQueryItem("myip", m_lastIP.toString());
+#else
+  QUrlQuery urlQuery(url);
+  urlQuery.addQueryItem("hostname", m_domain);
+  urlQuery.addQueryItem("myip", m_lastIP.toString());
+  url.setQuery(urlQuery);
+#endif
   Q_ASSERT(url.isValid());
+
   qDebug() << Q_FUNC_INFO << url.toString();
   return url;
 }

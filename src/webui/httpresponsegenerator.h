@@ -32,21 +32,23 @@
 #ifndef HTTPRESPONSEGENERATOR_H
 #define HTTPRESPONSEGENERATOR_H
 
-#include<QHttpResponseHeader>
+#include "httpresponseheader.h"
 
-class HttpResponseGenerator : public QHttpResponseHeader
+class HttpResponseGenerator : public HttpResponseHeader
 {
 
-	public:
+public:
+    HttpResponseGenerator(): m_gzip(false) {}
     void setMessage(const QByteArray& message);
     void setMessage(const QString& message);
     void setContentTypeByExt(const QString& ext);
-    inline QByteArray toByteArray() const {
-      return QHttpResponseHeader::toString().toUtf8() + message;
-    }
+    void setContentEncoding(bool gzip) { m_gzip = gzip; }
+    QByteArray toByteArray();
 
 private:
-        QByteArray message;
+    bool gCompress(QByteArray &dest_buffer);
+    QByteArray m_message;
+    bool m_gzip;
 
 };
 
